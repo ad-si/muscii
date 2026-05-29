@@ -89,12 +89,11 @@ fn main() -> ExitCode {
 
   // Only emit ANSI styling when writing to a terminal.
   let bold = io::stdout().is_terminal();
-  for (i, tune) in book.tunes.iter().enumerate() {
-    if i > 0 {
-      println!();
-    }
+  for tune in &book.tunes {
     let tune = render_tune(tune);
     print!("{}", if bold { embolden_rests(&tune) } else { tune });
+    // Blank line after each staff.
+    println!();
   }
 
   ExitCode::SUCCESS
