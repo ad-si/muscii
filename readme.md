@@ -2,7 +2,7 @@
 
 Render sheet music as ASCII art in your terminal.
 
-![Muscii rendering ABC notation in the terminal](screenshots/2026-05-29t1520_cli_examples.png)
+![Muscii rendering ABC notation in the terminal](screenshots/2026-05-29t1600_cli_examples_clef.png)
 
 
 ## Usage

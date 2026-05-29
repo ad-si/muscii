@@ -19,24 +19,43 @@ const STAFF_LINES: [i32; 5] = [9, 11, 13, 15, 17];
 const HEAD: char = '\u{2B24}'; // ⬤  note head (rendered two display columns wide)
 const LOW_BLOCK: char = '\u{2584}'; // ▄  lower half block
 const UP_BLOCK: char = '\u{2580}'; // ▀  upper half block
-const HEAVY: char = '\u{2501}'; // ━  outer staff line / heavy frame
-const LIGHT: char = '\u{2500}'; // ─  inner staff line / ledger line
+const LIGHT: char = '\u{2500}'; // ─  staff line / ledger line
 const REST: char = '\u{0292}'; // ʒ  stand-in for a quarter rest (widely supported)
 
 /// ANSI SGR codes used to render the rest glyph in bold on a terminal.
 const BOLD: &str = "\x1b[1m";
 const RESET: &str = "\x1b[0m";
 
-// Box frame: corners, side joints, and bar-line crossings.
-const FRAME_TL: char = '\u{250F}'; // ┏
-const FRAME_TR: char = '\u{2513}'; // ┓
-const FRAME_BL: char = '\u{2517}'; // ┗
-const FRAME_BR: char = '\u{251B}'; // ┛
-const FRAME_L: char = '\u{2523}'; // ┣
-const FRAME_R: char = '\u{252B}'; // ┫
-const BAR_TOP: char = '\u{2533}'; // ┳
-const BAR_MID: char = '\u{2542}'; // ╂
-const BAR_BOT: char = '\u{253B}'; // ┻
+// Box frame (thin): corners and side joints. Bar-line crossings keep a heavy
+// vertical so bar lines stay distinct against the thin staff lines.
+const FRAME_TL: char = '\u{250C}'; // ┌
+const FRAME_TR: char = '\u{2510}'; // ┐
+const FRAME_BL: char = '\u{2514}'; // └
+const FRAME_BR: char = '\u{2518}'; // ┘
+const FRAME_L: char = '\u{251C}'; // ├
+const FRAME_R: char = '\u{2524}'; // ┤
+const BAR_TOP: char = '\u{2530}'; // ┰  down heavy, horizontal light
+const BAR_MID: char = '\u{2542}'; // ╂  vertical heavy, horizontal light
+const BAR_BOT: char = '\u{2538}'; // ┸  up heavy, horizontal light
+
+/// Stylized treble (G) clef, one string per row from the top down. It spans the
+/// five staff lines plus one row above (the upper hook) and one below (the tail),
+/// so the renderer always reserves those two extra rows. Drawn just inside the
+/// left frame, before the notes. A space leaves whatever is underneath — staff
+/// line or blank — showing through; any other glyph overwrites it.
+const TREBLE_CLEF: [&str; 7] = [
+  "  ╭╮ ", //  above F5 — the upper hook
+  "  ┼┼ ", //  F5
+  "  ┤⎠ ", //  D5
+  " ╱├  ", //  B4  — spine crosses the staff
+  "( ╪ )", //  G4  — the eye wraps the G line
+  "  ┼  ", //  E4
+  " └┘  ", //  below E4 — the tail
+];
+/// Width of the clef, in display columns.
+const CLEF_BODY: usize = 5;
+/// Extra blank columns kept after the clef, on top of the usual slot separator.
+const CLEF_GAP: usize = 1;
 
 /// Display columns used by each slot. A note head (`⬤`) renders one column wide
 /// in terminals, so its second body column carries the staff line — the head
@@ -217,8 +236,8 @@ fn on_line(position: i32) -> bool {
 ///
 /// One text row per staff line. Line notes are drawn as a head on their line;
 /// space notes fill the gap between the bracketing lines with half blocks. The
-/// five staff lines are framed by a box whose top and bottom edges are the
-/// outer (heavy) lines.
+/// five thin staff lines are framed by a thin box whose top and bottom edges are
+/// the outer lines.
 fn render_staff(events: &[Event]) -> Vec<String> {
   // A trailing bar line is redundant: the closing frame edge already terminates
   // the staff. Drop any so the final bar does not draw an extra interior line.
@@ -230,8 +249,10 @@ fn render_staff(events: &[Event]) -> Vec<String> {
   // Vertical span, in line positions (odd values). Always cover the five staff
   // lines, then extend by whole lines so every note — and both lines bracketing
   // a space note — has a row.
-  let mut top = STAFF_LINES[4];
-  let mut bottom = STAFF_LINES[0];
+  // The clef hooks one row above the top line and tails one row below the
+  // bottom line, so always reserve those two rows.
+  let mut top = STAFF_LINES[4] + 2;
+  let mut bottom = STAFF_LINES[0] - 2;
   for event in events {
     if let Event::Notes(positions) = event {
       for &p in positions {
@@ -245,7 +266,7 @@ fn render_staff(events: &[Event]) -> Vec<String> {
   let rows = ((top - bottom) / 2 + 1) as usize;
   let row_of = |level: i32| -> usize { ((top - level) / 2) as usize };
 
-  let mut width = 1; // left frame
+  let mut width = 1 + CLEF_BODY + CLEF_GAP; // left frame + clef + gap
   for event in events {
     width += SEP
       + if matches!(event, Event::Bar) {
@@ -259,16 +280,11 @@ fn render_staff(events: &[Event]) -> Vec<String> {
 
   let mut grid = vec![vec![' '; width]; rows];
 
-  // Draw the five staff lines across the full width, then the box frame.
-  for (i, &level) in STAFF_LINES.iter().enumerate() {
+  // Draw the five (thin) staff lines across the full width, then the box frame.
+  for &level in &STAFF_LINES {
     let r = row_of(level);
-    let line = if i == 0 || i == STAFF_LINES.len() - 1 {
-      HEAVY
-    } else {
-      LIGHT
-    };
     for cell in &mut grid[r] {
-      *cell = line;
+      *cell = LIGHT;
     }
     let (l, rr) = if level == STAFF_LINES[4] {
       (FRAME_TL, FRAME_TR)
@@ -281,7 +297,28 @@ fn render_staff(events: &[Event]) -> Vec<String> {
     grid[r][last] = rr;
   }
 
-  let mut col = 1; // just past the left frame
+  // Overlay the clef, just inside the left frame. Its seven rows run from one
+  // line above the staff to one line below; spaces leave whatever is underneath
+  // (staff line or blank) showing through.
+  let clef_levels = [
+    STAFF_LINES[4] + 2,
+    STAFF_LINES[4],
+    STAFF_LINES[3],
+    STAFF_LINES[2],
+    STAFF_LINES[1],
+    STAFF_LINES[0],
+    STAFF_LINES[0] - 2,
+  ];
+  for (glyph, &level) in TREBLE_CLEF.iter().zip(clef_levels.iter()) {
+    let r = row_of(level);
+    for (j, ch) in glyph.chars().enumerate() {
+      if ch != ' ' {
+        grid[r][1 + j] = ch;
+      }
+    }
+  }
+
+  let mut col = 1 + CLEF_BODY + CLEF_GAP; // past the left frame, clef, and gap
   for event in events {
     col += SEP;
     match event {
@@ -424,15 +461,16 @@ mod tests {
     assert_eq!(events.len(), 4);
 
     let rows = render_staff(&events);
-    // Five staff lines plus the ledger row holding middle C below them.
-    assert_eq!(rows.len(), STAFF_LINES.len() + 1);
+    // Five staff lines, plus the clef's hook row above and tail row below (the
+    // latter doubling as the ledger row for middle C).
+    assert_eq!(rows.len(), STAFF_LINES.len() + 2);
     // C and E are lines (two heads); D is a space (a half-block pair).
     let heads: usize = rows.iter().map(|r| r.matches(HEAD).count()).sum();
     assert_eq!(heads, 2);
     let blocks: usize = rows.iter().map(|r| r.matches(LOW_BLOCK).count()).sum();
     assert_eq!(blocks, 2);
     // The frame is present: heavy top line and heavy bottom line.
-    assert!(rows.first().unwrap().starts_with(FRAME_TL));
+    assert!(rows.iter().any(|r| r.starts_with(FRAME_TL)));
     assert!(rows.iter().any(|r| r.starts_with(FRAME_BL)));
   }
 
