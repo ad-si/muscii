@@ -2,7 +2,7 @@
 
 use std::env;
 use std::fs;
-use std::io::{self, Read};
+use std::io::{self, IsTerminal, Read};
 use std::process::ExitCode;
 
 use abc_parser::abc;
@@ -21,7 +21,11 @@ const LOW_BLOCK: char = '\u{2584}'; // ▄  lower half block
 const UP_BLOCK: char = '\u{2580}'; // ▀  upper half block
 const HEAVY: char = '\u{2501}'; // ━  outer staff line / heavy frame
 const LIGHT: char = '\u{2500}'; // ─  inner staff line / ledger line
-const REST: char = '\u{25AC}'; // ▬
+const REST: char = '\u{0292}'; // ʒ  stand-in for a quarter rest (widely supported)
+
+/// ANSI SGR codes used to render the rest glyph in bold on a terminal.
+const BOLD: &str = "\x1b[1m";
+const RESET: &str = "\x1b[0m";
 
 // Box frame: corners, side joints, and bar-line crossings.
 const FRAME_TL: char = '\u{250F}'; // ┏
@@ -43,7 +47,7 @@ const BAR_BODY: usize = 1;
 /// Separator column inserted before every slot.
 const SEP: usize = 1;
 /// Fill columns kept between the last slot and the right frame.
-const TRAIL: usize = 3;
+const TRAIL: usize = 2;
 
 fn main() -> ExitCode {
   let mut args = env::args().skip(1);
@@ -83,14 +87,23 @@ fn main() -> ExitCode {
     return ExitCode::FAILURE;
   }
 
+  // Only emit ANSI styling when writing to a terminal.
+  let bold = io::stdout().is_terminal();
   for (i, tune) in book.tunes.iter().enumerate() {
     if i > 0 {
       println!();
     }
-    render_tune(tune);
+    let tune = render_tune(tune);
+    print!("{}", if bold { embolden_rests(&tune) } else { tune });
   }
 
   ExitCode::SUCCESS
+}
+
+/// Wrap each rest glyph in ANSI bold for terminal display. Kept out of
+/// `render_tune` so the rendered text (and snapshots) stay plain.
+fn embolden_rests(text: &str) -> String {
+  text.replace(REST, &format!("{BOLD}{REST}{RESET}"))
 }
 
 fn print_usage() {
@@ -101,17 +114,22 @@ fn print_usage() {
   println!("    muscii               Read ABC from stdin");
 }
 
-fn render_tune(tune: &Tune) {
+/// Render a tune (title, key, and staff) to text, each line newline-terminated.
+fn render_tune(tune: &Tune) -> String {
+  let mut out = String::new();
   if let Some(title) = header_field(&tune.header.lines, 'T') {
-    println!("{title}");
+    out.push_str(title);
+    out.push('\n');
   }
   if let Some(key) = header_field(&tune.header.lines, 'K') {
-    println!("Key: {key}");
+    out.push_str("Key: ");
+    out.push_str(key);
+    out.push('\n');
   }
 
   let Some(body) = &tune.body else {
-    println!("(no music)");
-    return;
+    out.push_str("(no music)\n");
+    return out;
   };
 
   for line in &body.lines {
@@ -121,10 +139,12 @@ fn render_tune(tune: &Tune) {
         continue;
       }
       for row in render_staff(&events) {
-        println!("{}", row.trim_end());
+        out.push_str(row.trim_end());
+        out.push('\n');
       }
     }
   }
+  out
 }
 
 /// Find the value of the first header field with the given tag (e.g. 'T', 'K').
@@ -267,8 +287,23 @@ fn render_staff(events: &[Event]) -> Vec<String> {
     col += SEP;
     match event {
       Event::Notes(positions) => {
+        // Lower half-blocks first, then upper, so a stacked chord of space
+        // notes reads as one solid column (upper blocks win on the shared
+        // lines). Heads are drawn last so they stay visible.
         for &p in positions {
-          draw_note(&mut grid, p, col, width, row_of);
+          if !on_line(p) {
+            draw_block(&mut grid, UP_BLOCK, p - 1, col, width, row_of);
+          }
+        }
+        for &p in positions {
+          if !on_line(p) {
+            draw_block(&mut grid, LOW_BLOCK, p + 1, col, width, row_of);
+          }
+        }
+        for &p in positions {
+          if on_line(p) {
+            draw_head(&mut grid, p, col, width, row_of);
+          }
         }
         col += NOTE_BODY;
       }
@@ -286,7 +321,8 @@ fn render_staff(events: &[Event]) -> Vec<String> {
         col += BAR_BODY;
       }
       Event::Rest => {
-        // The rest's second body column keeps the staff line behind it.
+        // A rest sits on the middle line; its second body column keeps the
+        // staff line behind it.
         grid[row_of(STAFF_LINES[2])][col] = REST;
         col += NOTE_BODY;
       }
@@ -299,35 +335,55 @@ fn render_staff(events: &[Event]) -> Vec<String> {
     .collect()
 }
 
-/// Draw a single note at `col` (the start of its two-column body).
-fn draw_note<F: Fn(i32) -> usize>(
+/// Draw a line note's head at `col` (the start of its two-column body). A head
+/// occupies one column; the rest of its body and the following separator stay as
+/// the staff line, so it reads `⬤━━`. Outside the staff it gets a short ledger
+/// line of its own.
+fn draw_head<F: Fn(i32) -> usize>(
   grid: &mut [Vec<char>],
   position: i32,
   col: usize,
   width: usize,
   row_of: F,
 ) {
-  if on_line(position) {
-    // A head sits on its line, occupying one column; the rest of its body and
-    // the following separator stay as the staff line, so it reads `⬤━━`. Off the
-    // staff the note needs its own short ledger line drawn in.
-    let r = row_of(position);
-    if position > STAFF_LINES[4] || position < STAFF_LINES[0] {
-      grid[r][col - 1] = LIGHT;
-      grid[r][col + 1] = LIGHT;
-      if col + 2 < width {
-        grid[r][col + 2] = LIGHT;
-      }
-    }
-    grid[r][col] = HEAD;
-  } else {
-    // A space note fills the gap between the lines above and below it.
-    let upper = row_of(position + 1);
-    let lower = row_of(position - 1);
-    grid[upper][col] = LOW_BLOCK;
-    grid[upper][col + 1] = LOW_BLOCK;
-    grid[lower][col] = UP_BLOCK;
-    grid[lower][col + 1] = UP_BLOCK;
+  let r = row_of(position);
+  if off_staff(position) {
+    draw_ledger(grid, r, col, width);
+  }
+  grid[r][col] = HEAD;
+}
+
+/// Draw one half-block of a space note on the staff line at `level`. A space
+/// note is a pair of these: `▄▄` on the line above and `▀▀` on the line below.
+/// A block landing on a ledger line gets a short ledger line of its own.
+fn draw_block<F: Fn(i32) -> usize>(
+  grid: &mut [Vec<char>],
+  block: char,
+  level: i32,
+  col: usize,
+  width: usize,
+  row_of: F,
+) {
+  let r = row_of(level);
+  if off_staff(level) {
+    draw_ledger(grid, r, col, width);
+  }
+  grid[r][col] = block;
+  grid[r][col + 1] = block;
+}
+
+/// True when a diatonic position lies above or below the five staff lines.
+fn off_staff(position: i32) -> bool {
+  position < STAFF_LINES[0] || position > STAFF_LINES[4]
+}
+
+/// Draw a short ledger line through a note's two-column body (and the separators
+/// flanking it), without overwriting the right frame.
+fn draw_ledger(grid: &mut [Vec<char>], row: usize, col: usize, width: usize) {
+  grid[row][col - 1] = LIGHT;
+  grid[row][col + 1] = LIGHT;
+  if col + 2 < width - 1 {
+    grid[row][col + 2] = LIGHT;
   }
 }
 
@@ -379,5 +435,21 @@ mod tests {
     // The frame is present: heavy top line and heavy bottom line.
     assert!(rows.first().unwrap().starts_with(FRAME_TL));
     assert!(rows.iter().any(|r| r.starts_with(FRAME_BL)));
+  }
+
+  /// Render every tune in an ABC source the way the CLI does.
+  fn render(source: &str) -> String {
+    let book = abc::tune_book(source).unwrap();
+    book.tunes.iter().map(render_tune).collect()
+  }
+
+  #[test]
+  fn scale_example() {
+    insta::assert_snapshot!(render(include_str!("../examples/scale.abc")));
+  }
+
+  #[test]
+  fn chords_example() {
+    insta::assert_snapshot!(render(include_str!("../examples/chords.abc")));
   }
 }

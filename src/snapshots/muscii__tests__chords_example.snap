@@ -1,0 +1,12 @@
+---
+source: src/main.rs
+expression: "render(include_str!(\"../examples/chords.abc\"))"
+---
+Chords and Rests
+Key: C
+┏━━━━━━━━━━━━━━┓
+┣──────────────┫
+┣────ʒ──▄▄─────┫
+┣─⬤─────▄▄─⬤───┫
+┗━⬤━━━━━▄▄━━━━━┛
+ ─⬤──  ─▀▀─
