@@ -2,43 +2,29 @@
 
 Render sheet music as ASCII art in your terminal.
 
+![Muscii rendering ABC notation in the terminal](screenshots/2026-05-29t1520_cli_examples.png)
+
 
 ## Usage
 
 Muscii reads [ABC notation](https://abcnotation.com/) and renders it as an
-ASCII staff. Pass a file, or pipe ABC in on stdin:
+staff using Unicode characters.
+Pass a file, or pipe ABC in on stdin:
 
 ```sh
-cargo run -- examples/scale.abc
+muscii examples/scale.abc
 # or
-cat examples/scale.abc | cargo run -- -
+cat examples/scale.abc | muscii
 ```
 
-Given `examples/scale.abc`:
-
-```abc
-X:1
-T:C Major Scale
-K:C
-CDEF GABc | cBAG FEDC |
-```
-
-it prints the tune's title and key followed by the rendered staff. The five
-staff lines are framed by a box whose outer lines are drawn heavy. The staff is
-a treble clef (bottom line E4, top line F5), so middle C sits one ledger line
-below the staff and a C-major scale starts there and steps up (see the C Major
-example below). Notes that fall on a line are drawn
-as a `⬤` head; notes on a space fill the gap between the two lines with half
-blocks (`▄▄` above, `▀▀` below), so a stepwise scale renders as a staircase.
-Bar lines and ledger lines are drawn as needed. Notes are laid out one column
-each (durations are not yet scaled), and chords stack into a single column.
+Check out the [examples](examples/) directory for more sample ABC files to try.
 
 Built on the [`abc-parser`](https://crates.io/crates/abc-parser) crate.
 
 
-## Syntax
+## Ideas
 
-### Pure ASCII
+### Pure ASCII Mode
 
 ```txt
                               ____
@@ -53,52 +39,7 @@ Built on the [`abc-parser`](https://crates.io/crates/abc-parser) crate.
 ```
 
 
-### Unicode
-
-```txt
---------------------------
---------------------------
---██--▅▅--------------▅▅__
-------▀▀--██--▅▅--██--▀▀--
---------------▀▀----------
-```
-
-```txt
-                           ██
-------------------------██-----|
-__________________▄▄_▀▀________|
-            ▁▁ ██ ▔▔           |
-▔▔▔▔▔▔▔▔▔██▔▀▀▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔|
-------██-----------------------|
-▄▄_██__________________________|
-▔▔
-```
-
-```txt
-                            ▄▄
-━━━━━━━━━━━━━━━━━━━━━━▄▄━⬛━▀▀━┓
-────────────────▄▄─⬛─▀▀───────┫
-──────────▄▄─⬛─▀▀─────────────┫
-────▄▄─⬛─▀▀───────────────────┫
-━⬛━▀▀━━━━━━━━━━━━━━━━━━━━━━━━━┛
-
-```
-
-
-#### C Major
-
-```txt
-
-┏━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━┓
-┣──────────────────────▄▄─╂─▄▄─────────────────────┫
-┣────────────────▄▄─⬤──▀▀─╂─▀▀─⬤──▄▄───────────────┫
-┣──────────▄▄─⬤──▀▀───────╂───────▀▀─⬤──▄▄─────────┫
-┗━━━━▄▄━⬤━━▀▀━━━━━━━━━━━━━┻━━━━━━━━━━━━━▀▀━⬤━━▄▄━━━┛
- ─⬤──▀▀                                       ▀▀─⬤──
-```
-
-
-### Different Circles:
+### Make Use of Additional Symbols
 
 Name | Sign
 -----|------
